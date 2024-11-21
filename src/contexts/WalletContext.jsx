@@ -10,17 +10,35 @@ export function WalletProvider({ children }) {
   const [isConnecting, setIsConnecting] = useState(false)
   const [error, setError] = useState(null)
   const [isMobile] = useState(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent))
+  const [isKeplrMobileAvailable, setIsKeplrMobileAvailable] = useState(false)
+
+  // Check if Keplr mobile is installed
+  useEffect(() => {
+    if (isMobile) {
+      const checkKeplrMobile = async () => {
+        try {
+          const response = await fetch('keplr://');
+          setIsKeplrMobileAvailable(true);
+        } catch (err) {
+          setIsKeplrMobileAvailable(false);
+        }
+      };
+      checkKeplrMobile();
+    }
+  }, [isMobile]);
 
   const connectWallet = useCallback(async () => {
     setIsConnecting(true)
     setError(null)
 
     try {
-      if (!window.keplr) {
-        if (isMobile) {
+      // Handle mobile connection
+      if (isMobile) {
+        if (!window.keplr) {
           handleMobileDeepLink()
           return
         }
+      } else if (!window.keplr) {
         throw new Error('Please install Keplr extension')
       }
 
@@ -98,11 +116,16 @@ export function WalletProvider({ children }) {
     if (isMobile) {
       const handleVisibilityChange = async () => {
         if (document.visibilityState === 'visible' && !address) {
-          try {
-            await connectWallet()
-          } catch (error) {
-            console.error('Failed to connect after returning from Keplr mobile:', error)
-          }
+          // Add a small delay to ensure the wallet has time to initialize
+          setTimeout(async () => {
+            try {
+              if (window.keplr) {
+                await connectWallet()
+              }
+            } catch (error) {
+              console.error('Failed to connect after returning from Keplr mobile:', error)
+            }
+          }, 1000)
         }
       }
 
@@ -120,6 +143,7 @@ export function WalletProvider({ children }) {
         isConnecting,
         error,
         isMobile,
+        isKeplrMobileAvailable,
         connectWallet,
         disconnectWallet,
         signAndBroadcast
