@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 import { chainConfig } from '../config/keplr'
+import { SigningStargateClient } from '@cosmjs/stargate'
+import { handleMobileDeepLink } from '../utils/deepLink'
 
 const WalletContext = createContext()
 
@@ -7,19 +9,26 @@ export function WalletProvider({ children }) {
   const [address, setAddress] = useState('')
   const [isConnecting, setIsConnecting] = useState(false)
   const [error, setError] = useState(null)
+  const [isMobile] = useState(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent))
 
   const connectWallet = useCallback(async () => {
     setIsConnecting(true)
     setError(null)
 
     try {
-      // Check if Keplr is installed
       if (!window.keplr) {
-        if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-          window.location.href = 'keplr://wallet'
+        if (isMobile) {
+          handleMobileDeepLink()
           return
         }
         throw new Error('Please install Keplr extension')
+      }
+
+      // Suggest the chain to Keplr
+      try {
+        await window.keplr.experimentalSuggestChain(chainConfig)
+      } catch (err) {
+        console.error('Failed to suggest chain:', err)
       }
 
       // Enable the chain
@@ -39,7 +48,7 @@ export function WalletProvider({ children }) {
     } finally {
       setIsConnecting(false)
     }
-  }, [])
+  }, [isMobile])
 
   const disconnectWallet = useCallback(() => {
     setAddress('')
@@ -53,13 +62,11 @@ export function WalletProvider({ children }) {
 
     try {
       const offlineSigner = await window.keplr.getOfflineSigner(chainConfig.chainId)
-      // Initialize SigningStargateClient
       const client = await SigningStargateClient.connectWithSigner(
         chainConfig.rpc,
         offlineSigner
       )
 
-      // Sign and broadcast the transaction
       const result = await client.signAndBroadcast(
         address,
         messages,
@@ -73,29 +80,47 @@ export function WalletProvider({ children }) {
     }
   }, [address])
 
+  // Handle Keplr account changes
   useEffect(() => {
     if (window.keplr) {
-      window.addEventListener('keplr_keystorechange', () => {
+      const handleKeystoreChange = () => {
         connectWallet()
-      })
-    }
-    
-    return () => {
-      if (window.keplr) {
-        window.removeEventListener('keplr_keystorechange', () => {
-          connectWallet()
-        })
+      }
+      window.addEventListener('keplr_keystorechange', handleKeystoreChange)
+      return () => {
+        window.removeEventListener('keplr_keystorechange', handleKeystoreChange)
       }
     }
   }, [connectWallet])
 
+  // Handle returning from mobile wallet
+  useEffect(() => {
+    if (isMobile) {
+      const handleVisibilityChange = async () => {
+        if (document.visibilityState === 'visible' && !address) {
+          try {
+            await connectWallet()
+          } catch (error) {
+            console.error('Failed to connect after returning from Keplr mobile:', error)
+          }
+        }
+      }
+
+      document.addEventListener('visibilitychange', handleVisibilityChange)
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange)
+      }
+    }
+  }, [isMobile, address, connectWallet])
+
   return (
     <WalletContext.Provider 
       value={{ 
-        address, 
+        address,
         isConnecting,
         error,
-        connectWallet, 
+        isMobile,
+        connectWallet,
         disconnectWallet,
         signAndBroadcast
       }}
